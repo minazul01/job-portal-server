@@ -1,5 +1,7 @@
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express')
+const jwt = require('jsonwebtoken')
+const cokieParser = require('cookie-parser')
 const app = express()
 const cors = require('cors')
 require('dotenv').config()
@@ -7,8 +9,28 @@ const port = process.env.PORT || 5000;
 
 
 // midleware
-app.use(cors());
+app.use(cors(
+ {origin: ['http://localhost:5173'],
+  credentials: true,
+ }
+));
 app.use(express.json());
+app.use(cokieParser());
+
+const verifyToken = (req, res, next) => {
+  const token = req?.cookies?.token;
+  if(!token){
+    return res.status(401).send({message: 'unautorize access'})
+  }
+  jwt.verify(token, process.env.JWT_Token, (err, decoded) => {
+    if(err){
+         return res.status(401).send({message: 'unautorize access'})
+    }
+    req.user = decoded;
+    next();
+  }) 
+
+}
 
 
 
@@ -32,10 +54,35 @@ async function run() {
     const jobApplicationCollection = client.db("job-portal").collection("jobs_Appliction");
 
 // data convert
+// get apis my jobs
     app.get("/jobs", async(req, res) => {
-      const result = await jobCollection.find().toArray();
+      const email = req.query.email;
+      let query = {};
+      if(email){
+        query = {hr_email: email}
+      }
+      const result = await jobCollection.find(query).toArray();
       res.send(result);
     });
+// authentication apis with token
+app.post('/jwt', (req, res) => {
+  const user = req.body;
+  const token = jwt.sign(user, process.env.JWT_Token, {expiresIn: '1d'});
+  res.cookie('token', token, {
+      httpOnly: true,
+      secure: false, // set to true if using HTTPS
+
+    })
+  .send({success: true})
+
+})
+
+    app.post("/jobs", async(req, res) => {
+      const data = req.body;
+      
+      const result = await jobCollection.insertOne(data);
+      res.send(result);
+    })
 
     // id daynamic
     app.get("/jobs/:id", async (req, res) => {
@@ -53,7 +100,7 @@ async function run() {
     })
 
     // job application get data 
-    app.get("/job-application", async (req, res) => {
+    app.get("/job-application", verifyToken, async (req, res) => {
       const quire = req.query.email;
       const data = {user_email: quire}
       const result = await jobApplicationCollection.find(data).toArray();
